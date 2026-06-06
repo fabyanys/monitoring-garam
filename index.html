@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Demo - Sistem Pemantauan Tambak</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen flex flex-col items-center py-10 px-4 font-sans">
+
+    <div class="max-w-4xl w-full">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight">Sistem Pemantauan Tambak Terpadu</h1>
+            <p class="text-slate-500 mt-2">Mode Live Demo (Real-Time)</p>
+            <div class="mt-4 inline-block px-4 py-1 rounded-full text-sm font-medium bg-slate-200 text-slate-600">
+                Status Server MQTT: <span id="status-koneksi" class="font-bold text-yellow-500">Menghubungkan...</span>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 text-center transition-all hover:shadow-md">
+                <h2 class="text-lg font-semibold text-slate-500 mb-2 uppercase tracking-wide text-sm">Ketinggian Air</h2>
+                <div class="text-6xl font-bold text-blue-600 flex justify-center items-baseline gap-2 mb-3">
+                    <span id="nilai-air">0</span>
+                    <span class="text-2xl font-medium text-slate-400">cm</span>
+                </div>
+                <div id="badge-kondisi" class="inline-block px-6 py-2 rounded-full text-sm font-bold bg-slate-100 text-slate-500">
+                    Menunggu Data Sensor...
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 text-center transition-all hover:shadow-md">
+                <h2 class="text-lg font-semibold text-slate-500 mb-2 uppercase tracking-wide text-sm">Status Gerbang / Pintu</h2>
+                <div class="text-4xl font-bold text-slate-800 mb-6 mt-4">
+                    <span id="status-pintu" class="text-slate-400">Menunggu Data...</span>
+                </div>
+                <div class="border-t border-slate-100 pt-4 bg-slate-50 rounded-b-xl -mx-6 -mb-6 pb-6">
+                    <p class="text-sm text-slate-500 mb-1">Simulasi Total Bukaan (Sesi Ini):</p>
+                    <p class="text-3xl font-bold text-indigo-600" id="total-buka">0 <span class="text-base font-normal text-slate-500">kali</span></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-slate-600">Grafik Fluktuasi Air (Live)</h2>
+                <span class="relative flex h-3 w-3">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                </span>
+            </div>
+            <div class="relative h-72 w-full">
+                <canvas id="waterChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- KONFIGURASI MQTT ---
+        // Menggunakan broker publik gratis untuk keperluan demo
+        const brokerUrl = 'wss://broker.hivemq.com:8443/mqtt';
+        
+        // GANTI INI DENGAN ID YANG BENAR-BENAR UNIK AGAR TIDAK BENTROK
+        const topikAir = 'demo_tambak_2026_x99/sensor/ketinggian'; 
+        const topikPintu = 'demo_tambak_2026_x99/sensor/pintu';    
+
+        // --- ELEMEN DOM ---
+        const elStatusKoneksi = document.getElementById('status-koneksi');
+        const elNilaiAir = document.getElementById('nilai-air');
+        const elBadgeKondisi = document.getElementById('badge-kondisi');
+        const elStatusPintu = document.getElementById('status-pintu');
+        const elTotalBuka = document.getElementById('total-buka');
+
+        let hitungBukaSesi = 0;
+        let statusPintuSebelumnya = '0';
+
+        // --- INISIALISASI GRAFIK ---
+        const ctx = document.getElementById('waterChart').getContext('2d');
+        const waterChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [], 
+                datasets: [{
+                    label: 'Tinggi Air (cm)',
+                    data: [],
+                    borderColor: '#2563eb', // Blue-600
+                    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.3,
+                    pointBackgroundColor: '#ffffff',
+                    pointBorderColor: '#2563eb',
+                    pointBorderWidth: 2,
+                    pointRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 400 },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100, // Asumsi tinggi maksimal simulasi adalah 100 cm
+                        grid: { borderDash: [5, 5] }
+                    },
+                    x: {
+                        grid: { display: false }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        function tambahDataGrafik(waktu, nilai) {
+            // Batasi tampilan grafik hanya 20 titik data terakhir agar rapi
+            if (waterChart.data.labels.length > 20) {
+                waterChart.data.labels.shift();
+                waterChart.data.datasets[0].data.shift();
+            }
+            waterChart.data.labels.push(waktu);
+            waterChart.data.datasets[0].data.push(nilai);
+            waterChart.update();
+        }
+
+        // --- KONEKSI WEBSOCKET MQTT ---
+        const client = mqtt.connect(brokerUrl);
+
+        client.on('connect', () => {
+            elStatusKoneksi.textContent = 'TERHUBUNG KE SERVER';
+            elStatusKoneksi.className = 'font-bold text-green-600';
+            client.subscribe(topikAir);
+            client.subscribe(topikPintu);
+        });
+
+        client.on('message', (topic, message) => {
+            const payload = message.toString();
+            const waktuSekarang = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second:'2-digit' });
+
+            if (topic === topikAir) {
+                const nilaiAir = parseInt(payload);
+                
+                // Animasi sederhana saat angka berubah
+                elNilaiAir.classList.add('scale-110', 'text-blue-400');
+                setTimeout(() => elNilaiAir.classList.remove('scale-110', 'text-blue-400'), 200);
+                
+                elNilaiAir.textContent = nilaiAir;
+                tambahDataGrafik(waktuSekarang, nilaiAir);
+
+                // Logika 3 Kondisi Ketinggian (Sesuaikan angkanya dengan tinggi wadah demo Anda)
+                if (nilaiAir < 20) {
+                    elBadgeKondisi.textContent = 'KONDISI: AIR RENDAH';
+                    elBadgeKondisi.className = 'inline-block px-6 py-2 rounded-full text-sm font-bold bg-red-100 text-red-600 shadow-sm';
+                } else if (nilaiAir >= 20 && nilaiAir <= 80) {
+                    elBadgeKondisi.textContent = 'KONDISI: AIR NORMAL';
+                    elBadgeKondisi.className = 'inline-block px-6 py-2 rounded-full text-sm font-bold bg-green-100 text-green-600 shadow-sm';
+                } else {
+                    elBadgeKondisi.textContent = 'KONDISI: AIR TINGGI / WASPADA';
+                    elBadgeKondisi.className = 'inline-block px-6 py-2 rounded-full text-sm font-bold bg-orange-100 text-orange-600 shadow-sm';
+                }
+            } 
+            else if (topic === topikPintu) {
+                if (payload === '1' && statusPintuSebelumnya === '0') {
+                    hitungBukaSesi++;
+                    elTotalBuka.innerHTML = `${hitungBukaSesi} <span class="text-base font-normal text-slate-500">kali</span>`;
+                }
+                statusPintuSebelumnya = payload;
+
+                if (payload === '1') {
+                    elStatusPintu.textContent = 'TERBUKA';
+                    elStatusPintu.className = 'text-orange-500 animate-pulse';
+                } else {
+                    elStatusPintu.textContent = 'TERTUTUP';
+                    elStatusPintu.className = 'text-green-500';
+                }
+            }
+        });
+    </script>
+</body>
+</html>
