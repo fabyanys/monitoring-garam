@@ -151,10 +151,10 @@
                 tambahDataGrafik(waktuSekarang, nilaiAir);
 
                 // Logika 3 Kondisi Ketinggian (Sesuaikan angkanya dengan tinggi wadah demo Anda)
-                if (nilaiAir < 20) {
+                if (nilaiAir < 5) {
                     elBadgeKondisi.textContent = 'KONDISI: AIR RENDAH';
                     elBadgeKondisi.className = 'inline-block px-6 py-2 rounded-full text-sm font-bold bg-red-100 text-red-600 shadow-sm';
-                } else if (nilaiAir >= 20 && nilaiAir <= 80) {
+                } else if (nilaiAir >= 5 && nilaiAir <= 10) {
                     elBadgeKondisi.textContent = 'KONDISI: AIR NORMAL';
                     elBadgeKondisi.className = 'inline-block px-6 py-2 rounded-full text-sm font-bold bg-green-100 text-green-600 shadow-sm';
                 } else {
